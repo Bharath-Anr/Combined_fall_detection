@@ -293,16 +293,52 @@ def create_person_state():
         "last_seen": 0
     }
 
-def save_snapshot(frame, camera_id, track_id):
-    """Save snapshot of person when fall is detected"""
+def save_snapshot(frame, camera_id, track_id, tracked_persons):
+    """Save snapshot with correct bbox + body midpoint"""
+    
+    state = tracked_persons.get(track_id)
+    if state is None:
+        return None
+
+    bbox = state.get("last_bbox")
+    body_mid = state.get("body_mid")  # we will store this
+
+    if bbox is None:
+        return None
+
+    snap = frame.copy()
+
+    x1, y1, x2, y2 = map(int, bbox)
+    h, w = snap.shape[:2]
+
+    # Clamp
+    x1 = max(0, min(x1, w - 1))
+    x2 = max(0, min(x2, w - 1))
+    y1 = max(0, min(y1, h - 1))
+    y2 = max(0, min(y2, h - 1))
+
+    # Draw bbox
+    cv2.rectangle(snap, (x1, y1), (x2, y2), (0, 0, 255), 2)
+
+    # Draw body midpoint
+    if body_mid is not None:
+        cv2.circle(
+            snap,
+            (int(body_mid[0]), int(body_mid[1])),
+            6,
+            (0, 255, 255),
+            -1
+        )
+
     date = datetime.now().strftime("%Y-%m-%d")
     time_str = datetime.now().strftime("%H-%M-%S")
-    
+
     folder = os.path.join(SNAPSHOT_ROOT, date, camera_id)
     os.makedirs(folder, exist_ok=True)
-    
+
     path = os.path.join(folder, f"{time_str}_person{track_id}.jpg")
-    cv2.imwrite(path, frame)
+    cv2.imwrite(path, snap)
+
     return path
 
 def log_fall(camera_id, track_id, rope_id, snapshot):
@@ -405,7 +441,7 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
                 pose["body_mid"][0] + ox,
                 pose["body_mid"][1] + oy
             )
-        
+        state["body_mid"] = body_mid
         fall_ref = body_mid
         
         # Initialization - assign person to rope
@@ -461,7 +497,7 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
         if not state["is_fallen"] and state["fall_counter"] >= fall_persistence_frames:
             state["is_fallen"] = True
             state["fall_logged"] = True  # Mark as logged
-            snap = save_snapshot(output, camera_id, tid)
+            snap = save_snapshot(output, camera_id, tid, tracked_persons)
             log_fall(camera_id, tid, state["rope_id"], snap)
             print(f"[FALL DETECTED] Camera: {camera_id}, Person: {tid}, Rope: {state['rope_id']}")
         
