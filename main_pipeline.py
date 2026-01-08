@@ -334,6 +334,7 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
     pose_conf = get_camera_config("pose_conf_threshold", camera_id, 0.15)
     fall_confirm_frames = get_camera_config("fall_confirm_frames", camera_id, 2)
     
+    
     # Adjust thresholds based on frame skip
     if frame_skip >= 5:
         iou_threshold = max(0.05, iou_threshold * 0.5)
@@ -347,8 +348,10 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
     
     # IoU tracking - match detections to existing tracks
     for det in detections:
-        if det.get("conf", 0.35) < pose_conf:
+        person_conf = get_camera_config("person_conf_threshold", camera_id, 0.35)
+        if det.get("conf", 0.0) < person_conf:
             continue
+
         bbox = det["bbox"]
         best_id = None
         best_iou = 0.0
@@ -379,7 +382,12 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
         
         # Get pose keypoints
         crop, offset = crop_person(frame, det["bbox"])
-        pose = detect_keypoints_on_crop(crop)
+        pose = detect_keypoints_on_crop(
+        crop,
+        camera_id=camera_id,
+        conf=pose_conf
+        )
+        pose = detect_keypoints_on_crop(crop, camera_id=camera_id, conf=pose_conf )
         
         # Fallback for high frame skip
         if pose is None and frame_skip >= 5:
