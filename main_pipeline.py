@@ -392,8 +392,8 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
     matches = []
     
     # IoU tracking - match detections to existing tracks
+    person_conf = get_camera_config("person_conf_threshold", camera_id, 0.35)
     for det in detections:
-        person_conf = get_camera_config("person_conf_threshold", camera_id, 0.35)
         if det.get("conf", 0.0) < person_conf:
             continue
 
