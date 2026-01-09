@@ -4,6 +4,7 @@
   
   "person_conf_threshold": {
     "cam1": 0.5,
+    "cam2": 0.5,
     "cam5": 0.5,
     "cam6": 0.5,
     "cam7": 0.5,
@@ -12,6 +13,7 @@
   
   "pose_conf_threshold": {
     "cam1": 0.15,
+    "cam2": 0.15,
     "cam5": 0.15,
     "cam6": 0.15,
     "cam7": 0.15,
@@ -20,6 +22,7 @@
   
   "kp_conf_threshold": {
     "cam1": 0.15,
+    "cam2": 0.15,
     "cam5": 0.15,
     "cam6": 0.15,
     "cam7": 0.15,
@@ -27,7 +30,8 @@
   },
   
   "iou_threshold": {
-    "cam1": 0.05,
+    "cam1": 0.1,
+    "cam2": 0.1,
     "cam5": 0.1,
     "cam6": 0.1,
     "cam7": 0.1,
@@ -36,6 +40,7 @@
   
   "fall_confirm_frames": {
     "cam1": 1,
+    "cam2": 1,
     "cam5": 1,
     "cam6": 1,
     "cam7": 1,
@@ -44,7 +49,8 @@
   
   "frame_skip": {
     "cam1": 10,
-    "cam5": 5,
+    "cam2": 10,
+    "cam5": 20,
     "cam6": 10,
     "cam7": 10,
     "cam8": 10
@@ -55,10 +61,14 @@
   "MAX_MISSED_FRAMES": 60,
   "SNAPSHOT_FOLDER": "fall_snapshots",
   "CSV_PREFIX": "falls_",
-  
+
+  "need_bounding_box": false,
+  "need_rope_in_frame": true,
+
   "camera_sources": {
     "cam1": "videos/cam1.mp4",
-    "cam5": "videos/cam5.4-problem.mp4",
+    "cam2": "videos/Untitled2.mp4",
+    "cam5": "videos/cam5.2.mp4",
     "cam6": "videos/cam6.mp4"
   },
   
@@ -70,6 +80,10 @@
         [1301, 436], [1401, 434], [1524, 427], [1634, 418]
       ]
     ],
+    "cam2": [
+    [[1253,511],[1390,527],[1478,526],[1542,531],[1614,533],[1659,542],[1720,541],[1762,541]]
+    ],
+    
     
     "cam5": [
       [
