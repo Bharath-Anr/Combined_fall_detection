@@ -36,6 +36,12 @@ def load_config(path=None):
     print(f"[main_pipeline] Loading config from: {path}")
     with open(path, "r") as f:
         return json.load(f)
+    
+def get_bool_config(key, default=True):
+    val = config.get(key, default)
+    if isinstance(val, str):
+        return val.lower() == "true"
+    return bool(val)
 
 # Config will be loaded in main() after parsing CLI args
 config = None
@@ -206,7 +212,8 @@ people_model = None
 def initialize_models():
     """Initialize YOLO models after config is loaded"""
     global people_model, ABOVE_ROPE_MARGIN_PX, FALL_THRESHOLD_PX, MAX_MISSED_FRAMES, SNAPSHOT_ROOT, CSV_PREFIX
-    
+    global NEED_BOUNDING_BOX, NEED_ROPE_IN_FRAME
+
     # Load constants from config
     constants = get_fixed_constants()
     ABOVE_ROPE_MARGIN_PX = constants['ABOVE_ROPE_MARGIN_PX']
@@ -214,7 +221,9 @@ def initialize_models():
     MAX_MISSED_FRAMES = constants['MAX_MISSED_FRAMES']
     SNAPSHOT_ROOT = constants['SNAPSHOT_ROOT']
     CSV_PREFIX = constants['CSV_PREFIX']
-    
+    NEED_BOUNDING_BOX = get_bool_config("need_bounding_box", True)
+    NEED_ROPE_IN_FRAME = get_bool_config("need_rope_in_frame", True)
+
     # Load person detection model
     PERSON_MODEL_PATH = config.get("PERSON_MODEL")
     if PERSON_MODEL_PATH is None:
@@ -502,7 +511,7 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
             print(f"[FALL DETECTED] Camera: {camera_id}, Person: {tid}, Rope: {state['rope_id']}")
         
         # Draw bounding box (only if enabled)
-        if draw_bounding_box:
+        if draw_bounding_box and NEED_BOUNDING_BOX:
             color = (0, 0, 255) if state["is_fallen"] else (0, 255, 0)
             cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
             
@@ -530,15 +539,16 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
 # =============================================================================
 
 def draw_ropes(frame, rope_polylines):
-    """Draw rope polylines on the frame"""
+    if not NEED_ROPE_IN_FRAME:
+        return frame
+
     if not rope_polylines:
         return frame
+
     out = frame.copy()
     for rope in rope_polylines:
-        if rope is None or len(rope) < 2:
-            continue
         pts = np.array(rope, np.int32)
-        cv2.polylines(out, [pts], False, (0, 200, 0), 2, lineType=cv2.LINE_AA)
+        cv2.polylines(out, [pts], False, (0, 200, 0), 2)
         for (x, y) in pts:
             cv2.circle(out, (int(x), int(y)), 3, (0, 200, 0), 2)
     return out
