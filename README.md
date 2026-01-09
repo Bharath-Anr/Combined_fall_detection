@@ -1,9 +1,9 @@
 config.json
-   ↓
+   ->
 pose_detector.py
-   ↓
+   ->
 (main pose + keypoint extraction)
-   ↓
+   ->
 main_pipeline.py
    ├─ rope loading & interpolation
    ├─ IoU-based tracking
