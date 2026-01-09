@@ -62,7 +62,7 @@
   "SNAPSHOT_FOLDER": "fall_snapshots",
   "CSV_PREFIX": "falls_",
 
-  "need_bounding_box": false,
+  "need_bounding_box": true,
   "need_rope_in_frame": true,
 
   "camera_sources": {
