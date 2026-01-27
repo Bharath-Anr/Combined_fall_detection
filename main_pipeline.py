@@ -42,7 +42,7 @@ def get_bool_config(key, default=True):
     if isinstance(val, str):
         return val.lower() == "true"
     return bool(val)
-
+        
 # Config will be loaded in main() after parsing CLI args
 config = None
 
@@ -95,7 +95,7 @@ def load_ropes_from_config(config, camera_id):
         except (ValueError, TypeError) as e:
             print(f"[load_ropes] Warning: Invalid rope format for {camera_id}: {e}")
             continue
-    
+            
     return rope_polylines
 
 def interpolate_rope_y(x: float, rope_polyline: np.ndarray) -> float:
@@ -178,6 +178,233 @@ def assign_rope_below_point(
             continue
     
     return best_idx
+
+
+def assign_rope_nearest_point(
+    point_x: float,
+    point_y: float,
+    rope_polylines: list[np.ndarray]) -> Optional[int]:
+    """
+    Returns index of nearest rope (above or below).
+    
+    Args:
+        point_x: x-coordinate of point
+        point_y: y-coordinate of point
+        rope_polylines: list of rope polyline arrays
+    
+    Returns:
+        Index of nearest rope, or None if no ropes found
+    """
+    if not rope_polylines:
+        return None
+    
+    best_idx = None
+    best_gap = float("inf")
+    
+    for idx, rope in enumerate(rope_polylines):
+        try:
+            rope_y = interpolate_rope_y(point_x, rope)
+            gap = abs(rope_y - point_y)  # Use absolute distance
+            
+            if gap < best_gap:
+                best_gap = gap
+                best_idx = idx
+        except (ValueError, IndexError):
+            continue
+    
+    return best_idx
+
+def get_rope_bounds(rope_polyline: np.ndarray) -> Tuple[float, float]:
+    """
+    Get x-coordinate bounds of a rope.
+    
+    Args:
+        rope_polyline: numpy array of rope points [[x1, y1], [x2, y2], ...]
+    
+    Returns:
+        Tuple of (min_x, max_x)
+    """
+    if rope_polyline is None or len(rope_polyline) == 0:
+        return None, None
+    
+    xs = rope_polyline[:, 0]
+    return float(np.min(xs)), float(np.max(xs))
+
+
+def calculate_horizontal_distance_to_rope(
+    point_x: float,
+    rope_polyline: np.ndarray
+) -> float:
+    """
+    Calculate minimum horizontal distance from point to rope.
+    
+    Args:
+        point_x: x-coordinate of the point
+        rope_polyline: numpy array of rope points
+    
+    Returns:
+        Minimum horizontal distance (0 if within bounds)
+    """
+    min_x, max_x = get_rope_bounds(rope_polyline)
+    
+    if min_x is None or max_x is None:
+        return float('inf')
+    
+    if min_x <= point_x <= max_x:
+        return 0.0
+    elif point_x < min_x:
+        return min_x - point_x
+    else:
+        return point_x - max_x
+
+
+def get_average_rope_height(rope_polyline: np.ndarray) -> float:
+    """
+    Get average y-coordinate (height) of a rope.
+    
+    Args:
+        rope_polyline: numpy array of rope points
+    
+    Returns:
+        Average y-coordinate
+    """
+    if rope_polyline is None or len(rope_polyline) == 0:
+        return float('inf')
+    
+    return float(np.mean(rope_polyline[:, 1]))
+
+
+def assign_rope_nearest_point_improved(
+    point_x: float,
+    point_y: float,
+    rope_polylines: list,
+    horizontal_margin: float = 80.0
+) -> Optional[int]:
+    """
+    Find nearest rope (above or below) with horizontal priority.
+    Better for initialization when you don't know if person is above or below rope.
+    
+    Strategy:
+    1. Filter ropes by horizontal proximity (within margin)
+    2. Among horizontally close ropes, find nearest by vertical distance
+    3. Fall back to nearest overall if no ropes in margin
+    
+    Args:
+        point_x: x-coordinate of person
+        point_y: y-coordinate of person
+        rope_polylines: list of rope polyline arrays
+        horizontal_margin: acceptable horizontal distance in pixels (typical: 50-100)
+    
+    Returns:
+        Index of nearest rope, or None if no ropes found
+    """
+    if not rope_polylines:
+        return None
+    
+    # Phase 1: Filter by horizontal proximity
+    horizontally_close = []
+    for idx, rope in enumerate(rope_polylines):
+        h_dist = calculate_horizontal_distance_to_rope(point_x, rope)
+        if h_dist <= horizontal_margin:
+            horizontally_close.append(idx)
+    
+    # Phase 2: Among horizontally close ropes, find nearest vertically
+    if horizontally_close:
+        best_idx = None
+        best_v_dist = float("inf")
+        
+        for idx in horizontally_close:
+            try:
+                rope_y = interpolate_rope_y(point_x, rope_polylines[idx])
+                v_dist = abs(rope_y - point_y)
+                
+                if v_dist < best_v_dist:
+                    best_v_dist = v_dist
+                    best_idx = idx
+            except (ValueError, IndexError):
+                continue
+        
+        return best_idx
+    
+    # Phase 3: Fallback - find nearest overall
+    best_idx = None
+    best_combined_dist = float("inf")
+    
+    for idx, rope in enumerate(rope_polylines):
+        try:
+            h_dist = calculate_horizontal_distance_to_rope(point_x, rope)
+            rope_y = interpolate_rope_y(point_x, rope)
+            v_dist = abs(rope_y - point_y)
+            
+            # Weighted distance: horizontal matters more
+            combined = h_dist * 2.0 + v_dist
+            
+            if combined < best_combined_dist:
+                best_combined_dist = combined
+                best_idx = idx
+        except (ValueError, IndexError):
+            continue
+    
+    return best_idx
+
+
+def log_rope_assignment(tid, point_x, point_y, rope_polylines, assigned_rope_idx, verbose=False):
+    """
+    Log rope assignment details for debugging.
+    
+    Args:
+        tid: track ID
+        point_x: point x-coordinate
+        point_y: point y-coordinate
+        rope_polylines: list of rope polylines
+        assigned_rope_idx: assigned rope index
+        verbose: if True, print all ropes; if False, print only assigned
+    """
+    if assigned_rope_idx is None:
+        print(f"[ROPE_ASSIGN] Person {tid} at ({int(point_x)}, {int(point_y)}) - NO ROPE ASSIGNED")
+        return
+    
+    try:
+        h_dist = calculate_horizontal_distance_to_rope(point_x, rope_polylines[assigned_rope_idx])
+        rope_y = interpolate_rope_y(point_x, rope_polylines[assigned_rope_idx])
+        v_dist = rope_y - point_y
+        avg_height = get_average_rope_height(rope_polylines[assigned_rope_idx])
+        
+        print(f"[ROPE_ASSIGN] Person {tid} at ({int(point_x)}, {int(point_y)})")
+        print(f"  ✓ Assigned: Rope {assigned_rope_idx}")
+        print(f"    h_dist={h_dist:.1f}px, v_dist={v_dist:.1f}px, avg_height={avg_height:.1f}")
+    except Exception as e:
+        print(f"[ROPE_ASSIGN] Error logging assignment: {e}")
+
+
+def validate_rope_assignment(
+    point_x: float,
+    point_y: float,
+    rope_polylines: list,
+    assigned_rope_idx: Optional[int],
+    horizontal_margin: float = 80.0
+) -> Tuple[bool, str]:
+    """
+    Validate if a rope assignment is reasonable.
+    
+    Returns:
+        Tuple of (is_valid, reason_string)
+    """
+    if assigned_rope_idx is None:
+        return False, "No rope assigned"
+    
+    if assigned_rope_idx >= len(rope_polylines):
+        return False, f"Rope index {assigned_rope_idx} out of bounds"
+    
+    try:
+        h_dist = calculate_horizontal_distance_to_rope(point_x, rope_polylines[assigned_rope_idx])
+        
+        if h_dist > horizontal_margin * 1.5:  # Allow 1.5x margin as threshold
+            return False, f"Rope too far horizontally ({h_dist:.1f}px > {horizontal_margin*1.5:.1f}px)"
+        
+        return True, f"Valid assignment (h_dist={h_dist:.1f}px)"
+    except (ValueError, IndexError) as e:
+        return False, f"Error validating: {str(e)}"
 
 # =============================================================================
 # FALL LOGIC SECTION
@@ -273,6 +500,8 @@ def crop_person(frame, bbox, pad_ratio=0.15):
     cy2 = min(h, y2 + py)
     
     return frame[cy1:cy2, cx1:cx2], (cx1, cy1)
+def bbox_center(b):
+    return ((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5)
 
 def iou(a, b):
     """Calculate Intersection over Union"""
@@ -289,18 +518,7 @@ def iou(a, b):
     areaB = (b[2] - b[0]) * (b[3] - b[1])
     return inter / float(areaA + areaB - inter)
 
-def create_person_state():
-    """Create new person tracking state"""
-    return {
-        "rope_id": None,
-        "initialized_above": False,
-        "above_counter": 0,
-        "fall_counter": 0,
-        "is_fallen": False,
-        "fall_logged": False,  # Track if fall has been logged
-        "last_bbox": None,
-        "last_seen": 0
-    }
+
 
 def save_snapshot(frame, camera_id, track_id, tracked_persons):
     """Save snapshot with correct bbox + body midpoint"""
@@ -369,6 +587,33 @@ def log_fall(camera_id, track_id, rope_id, snapshot):
             snapshot
         ])
 
+def classify_rope_side(mid_y, rope_y, margin):
+    if mid_y < rope_y - margin:
+        return "ABOVE"
+    elif mid_y > rope_y + margin:
+        return "BELOW"
+    else:
+        return "NEAR"
+
+def create_person_state():
+    return {
+        "rope_id": None,
+        "initialized_above": False,
+        "rope_side": None,
+        "prev_rope_side": None,
+        "below_counter": 0,
+        "transition_detected": False,
+        "is_fallen": False,
+        "fall_logged": False,
+        "last_bbox": None,
+        "last_seen": 0,
+        "body_mid": None,
+        "stable_side": None,
+        "stabilization_frames": 0,
+        "last_confirmed_side": None  # NEW: Track last confirmed stable side
+    }
+
+
 def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, frame_idx, draw_bounding_box=True):
     """Main fall detection processing for a single frame"""
     global NEXT_TRACK_ID
@@ -378,48 +623,81 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
     iou_threshold = get_camera_config("iou_threshold", camera_id, 0.15)
     pose_conf = get_camera_config("pose_conf_threshold", camera_id, 0.15)
     fall_confirm_frames = get_camera_config("fall_confirm_frames", camera_id, 2)
-    
+    centre_distance_fallback=get_camera_config("centre_distance_fallback",camera_id,10)
     
     # Adjust thresholds based on frame skip
     if frame_skip >= 5:
-        iou_threshold = max(0.05, iou_threshold * 0.5)
+        iou_threshold = 0.03
     
-    initial_confirm_frames = max(2, math.ceil(10 / frame_skip))
-    fall_persistence_frames = max(fall_confirm_frames, math.ceil(10 / frame_skip))
+    fall_persistence_frames = get_camera_config("fall_confirm_frames", camera_id, 1)
     
     output = frame.copy()
     detections = detect_people(frame, camera_id)
     matches = []
+    person_conf = get_camera_config("person_conf_threshold", camera_id, 0.35)
     
     # IoU tracking - match detections to existing tracks
-    person_conf = get_camera_config("person_conf_threshold", camera_id, 0.35)
     for det in detections:
         if det.get("conf", 0.0) < person_conf:
             continue
-
+        
         bbox = det["bbox"]
         best_id = None
         best_iou = 0.0
+        best_dist = float("inf")
+        dist_id = None
+        
+        cx1, cy1 = bbox_center(bbox)
         
         for tid, state in tracked_persons.items():
             if state["last_bbox"] is None:
                 continue
-            val = iou(bbox, state["last_bbox"])
+            
+            prev_bbox = state["last_bbox"]
+            
+            # IoU matching
+            val = iou(bbox, prev_bbox)
             if val > best_iou:
                 best_iou = val
                 best_id = tid
-        
-        if best_iou >= iou_threshold:
+            
+            # Center-distance fallback (critical for frame_skip=25)
+            cx2, cy2 = bbox_center(prev_bbox)
+            dx = cx1 - cx2
+            dy = cy1 - cy2
+            dist = math.sqrt(dx*dx + 2.5 * dy*dy)
+
+            #dist = math.hypot(cx1 - cx2, cy1 - cy2)
+            if dist < best_dist:
+                best_dist = dist
+                dist_id = tid
+
+        used_track_ids = set()
+
+        if best_iou >= iou_threshold and best_id not in used_track_ids:
             matches.append((best_id, det))
+            used_track_ids.add(best_id)
+
+# CHECK IF BEST_DIST is within permissible limit to consider as same bounding box. To accomodate the high frame_skip
+        elif frame_skip >= 15 and best_dist <= centre_distance_fallback  and dist_id not in used_track_ids: 
+            matches.append((dist_id, det))
+            used_track_ids.add(dist_id)
+
         else:
             tid = NEXT_TRACK_ID
             NEXT_TRACK_ID += 1
             tracked_persons[tid] = create_person_state()
             matches.append((tid, det))
+            used_track_ids.add(tid)
+
     
-    # Update tracks
+    # Update tracks and perform fall detection
     for tid, det in matches:
         state = tracked_persons[tid]
+
+        if not det.get("bbox") or len(det["bbox"]) != 4:
+            continue
+
         state["last_seen"] = frame_idx
         state["last_bbox"] = det["bbox"]
         
@@ -428,14 +706,13 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
         # Get pose keypoints
         crop, offset = crop_person(frame, det["bbox"])
         pose = detect_keypoints_on_crop(
-        crop,
-        camera_id=camera_id,
-        conf=pose_conf
+            crop,
+            camera_id=camera_id,
+            conf=pose_conf
         )
-        pose = detect_keypoints_on_crop(crop, camera_id=camera_id, conf=pose_conf )
         
         # Fallback for high frame skip
-        if pose is None and frame_skip >= 5:
+        if pose is None and frame_skip >= 10:
             ankle_mid = ((x1 + x2) // 2, y2)
             body_mid = ((x1 + x2) // 2, (y1 + y2) // 2)
         elif pose is None:
@@ -450,37 +727,83 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
                 pose["body_mid"][0] + ox,
                 pose["body_mid"][1] + oy
             )
+        
         state["body_mid"] = body_mid
         fall_ref = body_mid
-        
+
         # Initialization - assign person to rope
         if not state["initialized_above"]:
-            rope_id = assign_rope_below_point(
+            # Get camera-specific rope assignment parameters
+            rope_config = get_camera_config("rope_assignment", camera_id, {})
+            
+            # Handle both dict and non-dict formats
+            if isinstance(rope_config, dict):
+                h_margin = rope_config.get("horizontal_margin", 80)
+                enable_debug = rope_config.get("enable_debug_logging", False)
+                enable_validation = rope_config.get("enable_validation", False)
+            else:
+                h_margin = 80
+                enable_debug = False
+                enable_validation = False
+            
+            # Find nearest rope with horizontal priority
+            rope_id = assign_rope_nearest_point_improved(
                 ankle_mid[0],
                 ankle_mid[1],
-                rope_polylines
+                rope_polylines,
+                horizontal_margin=5.0
             )
-            
+            if rope_id is not None:
+                rope_y = interpolate_rope_y(
+                    ankle_mid[0],
+                    rope_polylines[rope_id]
+                )
+                if rope_y <= ankle_mid[1]:
+                    print(f"[INIT-WARN] Person {tid}: rope not below feet, skipping init")
+                    continue
+
             if rope_id is None:
+                print(f"[INIT] Person {tid}: No rope assigned (all ropes too far)")
                 continue
+            
+            # Debug logging
+            if enable_debug:
+                log_rope_assignment(tid, ankle_mid[0], ankle_mid[1], rope_polylines, rope_id, verbose=False)
+            
+            # Validation
+            if enable_validation:
+                is_valid, reason = validate_rope_assignment(
+                    ankle_mid[0], ankle_mid[1], rope_polylines, rope_id, h_margin
+                )
+                if not is_valid:
+                    print(f"[WARN] Person {tid}: {reason}")
             
             rope_y = interpolate_rope_y(
                 ankle_mid[0],
                 rope_polylines[rope_id]
             )
             
-            if ankle_mid[1] < rope_y - ABOVE_ROPE_MARGIN_PX:
-                state["above_counter"] += frame_skip
-            else:
-                state["fall_counter"] += frame_skip
+            rope_side = classify_rope_side(
+                ankle_mid[1],
+                rope_y,
+                ABOVE_ROPE_MARGIN_PX)
             
-            if frame_skip >= 5 and state["above_counter"] >= frame_skip:
-                state["initialized_above"] = True
-                state["rope_id"] = rope_id
-            elif frame_skip < 5 and state["above_counter"] >= initial_confirm_frames:
-                state["initialized_above"] = True
-                state["rope_id"] = rope_id
-            continue
+            # Initialization - assign person to rope
+            state["initialized_above"] = True
+            state["rope_id"] = rope_id
+            state["rope_side"] = rope_side
+            state["prev_rope_side"] = rope_side
+            state["stabilization_frames"] = 1
+
+            # 🔒 CRITICAL: lock safe baseline
+            if rope_side in ["ABOVE", "NEAR"]:
+                state["last_confirmed_side"] = "ABOVE"
+                state["stable_side"] = "ABOVE"
+
+            print(f"[INIT] Person {tid}: rope_id={rope_id}, initial_side={rope_side}, "
+                f"confirmed={state['last_confirmed_side']}")
+
+            continue  # Skip fall detection on initialization frame
         
         # Draw reference point
         cv2.circle(
@@ -497,23 +820,93 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
             rope_polylines[state["rope_id"]]
         )
         
-        if fall_ref[1] > rope_y + FALL_THRESHOLD_PX:
-            state["fall_counter"] += 1
-        else:
-            state["fall_counter"] = 0
+        # Determine rope side
+        rope_side = classify_rope_side(
+            fall_ref[1],
+            rope_y,
+            FALL_THRESHOLD_PX
+        )
         
-        # Trigger fall event
-        if not state["is_fallen"] and state["fall_counter"] >= fall_persistence_frames:
+        state["prev_rope_side"] = state["rope_side"]
+        state["rope_side"] = rope_side
+
+        print(
+        f"[TRACK] frame={frame_idx} id={tid} "
+        f"cx={int((x1+x2)/2)} cy={int((y1+y2)/2)} "
+        f"side={rope_side} confirmed={state['last_confirmed_side']}")      
+
+        # ===== IMPROVED STABILIZATION LOGIC =====
+        # For high frame skip, be more lenient about side changes
+        stabilization_threshold = 1 if frame_skip >= 15 else 3
+        
+        if rope_side == state["stable_side"]:
+            # Same side as last stable state
+            state["stabilization_frames"] += 1
+            
+            # Once stable, confirm this as the baseline
+            if state["stabilization_frames"] >= stabilization_threshold:
+                state["last_confirmed_side"] = state["stable_side"]
+        else:
+            # Different side - start counting towards new stable side
+            state["stabilization_frames"] = 1
+            
+            # For very high frame skip, consider any side change as potential stabilization
+            if frame_skip >= 20:
+                # Immediately update if we see a clear change
+                if rope_side == "ABOVE":
+                    state["last_confirmed_side"] = "ABOVE"
+                    state["last_confirmed_side"] = rope_side
+                    state["stabilization_frames"] = stabilization_threshold
+            elif state["stabilization_frames"] >= stabilization_threshold:
+                # Update stable side after threshold
+                state["stable_side"] = rope_side
+                state["last_confirmed_side"] = rope_side
+        
+        # ===== FALL DETECTION =====
+        # Detect transition: from ABOVE (confirmed) to BELOW (current)
+        if (state["last_confirmed_side"] == "ABOVE" 
+            and rope_side == "BELOW" ):
+            state["transition_detected"] = True
+            state["below_counter"] = 1
+            print(f"[TRANSITION] Person {tid}: ABOVE->BELOW detected at frame {frame_idx}")
+        
+        elif rope_side == "BELOW" and state["transition_detected"]:
+            state["below_counter"] += 1
+        
+        elif rope_side != "BELOW":
+            # Reset if they go back above
+            state["below_counter"] = 0
+            state["transition_detected"] = False
+        
+        # Confirm fall
+        if (
+            not state["is_fallen"]
+            and state["transition_detected"]
+            and state["below_counter"] >= fall_persistence_frames
+        ):
             state["is_fallen"] = True
-            state["fall_logged"] = True  # Mark as logged
+            state["last_confirmed_side"] = "BELOW"  # ✅ ONLY HERE
+            state["fall_logged"] = True
             snap = save_snapshot(output, camera_id, tid, tracked_persons)
             log_fall(camera_id, tid, state["rope_id"], snap)
-            print(f"[FALL DETECTED] Camera: {camera_id}, Person: {tid}, Rope: {state['rope_id']}")
+            print(f"[FALL DETECTED] Camera={camera_id}, Person={tid}, Rope={state['rope_id']}, "
+                  f"below_counter={state['below_counter']}, persist_frames={fall_persistence_frames}")
         
         # Draw bounding box (only if enabled)
         if draw_bounding_box and NEED_BOUNDING_BOX:
-            color = (0, 0, 255) if state["is_fallen"] else (0, 255, 0)
+            color = (0, 0, 255) if state["is_fallen"] else (255, 255, 0)
             cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
+            label = f"ID {tid} [{state['rope_side']}]"
+            cv2.putText(
+                output,
+                label,
+                (x1, max(0, y1 - 25)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color,
+                2,
+                cv2.LINE_AA
+            )
             
             if state["is_fallen"]:
                 cv2.putText(
@@ -533,7 +926,6 @@ def process_frame_for_falls(frame, camera_id, rope_polylines, tracked_persons, f
             del tracked_persons[tid]
     
     return output, tracked_persons
-
 # =============================================================================
 # PROCESS CAMERA SECTION
 # =============================================================================
@@ -624,8 +1016,7 @@ def run_video_loop(video_path, camera_id, display=True, max_frames=None, save_ou
             # Process frame
             start = time.time()
             annotated_frame, tracked_persons = process_frame_for_falls(
-                frame, camera_id, rope_polylines, tracked_persons, frame_idx, draw_bounding_box
-            )
+                frame, camera_id, rope_polylines, tracked_persons, frame_idx, draw_bounding_box)
             end = time.time()
             inference_ms = (end - start) * 1000
             
